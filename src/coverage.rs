@@ -66,11 +66,6 @@ pub(crate) fn blocks_from_cigar(
     }
 }
 
-/// Routes one read's aligned blocks into its chromosome's regions, applying
-/// deeptools' `SumCoveragePerBin.get_coverage_of_region` arithmetic per region.
-/// `chrom_regions` is ascending by start; the read can touch the (single) tiled
-/// region of its chunk, or — in the sparse single-bin layout — at most a handful
-/// of consecutive single-bin regions.
 pub(crate) fn add_read(
     counts: &mut [i64],
     chrom_regions: &[Region],
@@ -101,12 +96,9 @@ pub(crate) fn add_read(
     }
 }
 
-/// deeptools `SumCoveragePerBin.get_coverage_of_region` for one region. `cov` is
-/// the bin slice for this region (`tileSize == bin_size`, `nRegBins == n_bins`).
-/// Per-base coverage is spread across tiles with deeptools' exact integer
-/// arithmetic — including the `ceil`/`eIdx` clamp and `last_eIdx` block guard
-/// that the upstream tiled path uses (and that make wide reads over-count a tile
-/// rather than clipping to true per-base overlap; matched for byte parity).
+// deeptools SumCoveragePerBin.get_coverage_of_region: the ceil/eIdx clamp and
+// last_eIdx guard cause wide reads to over-count a tile rather than clip to
+// true per-base overlap; reproduced as-is for byte parity.
 pub(crate) fn cover_region(cov: &mut [i64], reg: &Region, blocks: &[(u64, u64)], bin_size: u64) {
     let reg0 = reg.start as i64;
     let reg1 = reg.end as i64;
@@ -177,9 +169,6 @@ fn div_ceil_i64(a: i64, b: i64) -> i64 {
     (a + b - 1) / b
 }
 
-/// Single streaming pass: every kept read is routed to its chromosome's regions
-/// and its aligned blocks are spread across the bins via deeptools'
-/// `SumCoveragePerBin.get_coverage_of_region` arithmetic.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn accumulate_coverage(
     input: &Path,

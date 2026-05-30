@@ -1,62 +1,9 @@
-//! ChIP-enrichment fingerprint, matching deeptools `plotFingerprint` default semantics.
+//! ChIP-enrichment fingerprint, matching deeptools `plotFingerprint` defaults.
 //!
-//! The genome is sampled at evenly spaced windows (bins). Each bin's value is
-//! the per-base read coverage summed over the bin. Sorting those per-bin values
-//! and plotting their normalised cumulative sum against the normalised bin rank
-//! gives a Lorenz curve: a diagonal means coverage is uniform (no enrichment),
-//! a sharp elbow near the right means a few bins hold most of the signal (strong
-//! ChIP enrichment).
-//!
-//! ## Deterministic sampling (source parity with deeptools)
-//!
-//! deeptools does **not** pick bins at random. With the whole genome it sets
-//! `stepSize = max(genomeSize / numberOfSamples, 1)` and walks each chromosome
-//! at `stepSize` intervals, taking one bin `[i, i + binSize)` per step. The walk
-//! happens inside genome "chunks" (`mapReduce` partitions) of length `chunkSize`,
-//! and a bin that would cross a chunk boundary (`i + binSize > chunkEnd`) is
-//! dropped — so chunk geometry, not just stepSize, decides which bins exist.
-//! `chunkSize` itself is derived from the BAM's mapped-read count:
-//!
-//! ```text
-//! reads_per_bp = max_mapped / genomeSize
-//! chunkSize    = floor(stepSize * 1000 / (reads_per_bp * nBams))
-//! chunkSize    = max(chunkSize, stepSize, binSize)
-//! ```
-//!
-//! Reproducing all of this makes our sampled-bin set identical to deeptools'
-//! when run with one BAM at `--numberOfProcessors 1` (no task shuffle).
-//!
-//! ## Per-bin coverage rule (`SumCoveragePerBin`)
-//!
-//! For each bin `[reg0, reg1)` (a single-tile region, `tileSize = binSize`):
-//! every read with `FLAG & 0x4 == 0` is decomposed into aligned blocks
-//! (`get_blocks()`: reference-consuming M/=/X runs, split by D and N). Each block
-//! contributes `min(blockEnd, reg1) - max(blockStart, reg0)` bases (clamped to
-//! `[0, binSize]`) to the bin. Default filters: skip unmapped only — no MAPQ
-//! floor, no FLAG include/exclude, duplicates kept, reads not extended
-//! (`extendReads=False` → `defaultFragmentLength == "read length"`).
-//!
-//! ## Output (`--out-raw-counts`)
-//!
-//! Mirrors `plotFingerprint --outRawCounts`: a `#plotFingerprint --outRawCounts`
-//! header, a quoted label line, then one integer per sampled bin (the per-base
-//! coverage, formatted `%d` exactly as deeptools casts the float column). Bins
-//! appear in genome order (chromosome header order, ascending position).
-//!
-//! ## Fingerprint + summary (`--out-fingerprint`, `--out-quality-metrics`)
-//!
-//! The fingerprint is the sorted, cumulative, max-normalised coverage vs the
-//! normalised rank — the data behind deeptools' PNG. The quality metrics
-//! (AUC, X-intercept, elbow) use deeptools' exact formulas over the sorted
-//! cumulative curve.
-//!
-//! ## Scope
-//!
-//! We emit the data tables (raw counts, fingerprint curve, summary metrics), not
-//! the PNG plot — the same split as `rsomics-bam-signal`, which emits bedGraph
-//! rather than bigWig. Synthetic/JSD/CHANCE columns (only produced with
-//! `--JSDsample` against a reference BAM) are out of scope for this
-//! single-input crate.
+//! Sampling, chunkSize derivation, per-bin coverage arithmetic, and output
+//! format all match deeptools at one BAM / one process — see `sampling.rs`
+//! and `coverage.rs` for the upstream-cited formulas. Output is the data tables
+//! (raw counts, fingerprint curve, quality metrics), not the PNG.
 
 #![allow(clippy::cast_precision_loss)]
 
@@ -101,12 +48,10 @@ impl Default for FingerprintOpts {
     }
 }
 
-/// The fingerprint result: per-bin per-base coverage in genome order.
 pub struct Fingerprint {
     pub counts: Vec<u64>,
 }
 
-/// Compute the per-bin per-base coverage fingerprint for `input`.
 pub fn fingerprint(
     input: &Path,
     opts: &FingerprintOpts,
